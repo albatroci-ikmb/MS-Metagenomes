@@ -1,0 +1,296 @@
+---
+title: "checkm results table"
+author: "Alba Troci"
+date: "`r Sys.Date()`"  
+output:
+   BiocStyle::html_document:
+      toc: true
+      df_print: paged
+      self_contained: true
+      code_download: true 
+      highlight: tango
+editor_options: 
+  chunk_output_type: console
+params:
+  FIGPATH: "figures/"
+  d.out: "./"
+---
+# Preparations
+## Set global options
+
+```{r style, results="asis", cache=FALSE, message = F, echo=FALSE}
+# Set knit global options
+library("knitr")
+options(digits = 2, width = 80)
+golden_ratio <- (1 + sqrt(5)) / 2
+opts_chunk$set(echo = TRUE,
+               tidy = FALSE,
+               include = TRUE,
+               fig.path = params$FIGPATH,
+               dev=c("png",'pdf'),
+               fig.height = 5,
+               fig.width = 4 * golden_ratio,
+               comment = '  ',
+               dpi = 300,
+               cache = FALSE)
+
+
+# Pretty outputs
+library("rmarkdown")
+library("BiocStyle")
+library("ggthemes") # add ggplot2 themes
+library("ggplot2")
+library("ggpubr")
+
+# Set seed for reproducibility
+set.seed(100)
+
+# Set plotting theme
+theme_set(theme_few(base_size = 14))
+
+# Set output directory
+d.out <- params$d.out
+rm(params)
+```
+
+
+## Load libraries for the session
+```{r libraries, message=FALSE}
+library("magrittr")
+library("ggplot2")
+library("tidyverse")
+library("readxl")
+library("dada2")
+library("phyloseq")
+library("gridExtra")
+library("vegan")
+library("plyr")
+library("scales")
+library("reshape2")
+library("DESeq2")
+library("dplyr") #for data manipulation
+library("msa") #multiple sequence alignment
+library("ape") #to create phylogenetic tree
+library("randomForest") 
+library("caret") 
+library("broom")
+library("mlbench")
+library("plotROC")
+library("car")
+library("MASS")
+library("lme4")
+library("lmerTest")
+library("fitdistrplus")
+library("psycho")
+
+library("rstatix")
+library("coin")
+library("stringr")
+library("rio")
+
+
+```
+
+```{r}
+final.bins <- read.csv(paste("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich.kiel/arg/amg.stool/2.all.amgs.stool.km.tsv"),sep = '\t', header=TRUE)
+```
+
+
+```{r}
+amgs <- final.bins[, c("Best_Hit_ARO", "Drug.Class", "Resistance.Mechanism",
+                       "counts", "length_bp", "Sample")]
+
+```
+
+
+```{r}
+amgs$rel.counts <- amgs$counts/amgs$length_bp
+```
+
+```{r}
+amgs2 <- aggregate(amgs$rel.counts, list(Gene= amgs$Best_Hit_ARO, 
+                                         Drug.class=amgs$Drug.Class, 
+                                         Resistance.mechanism=amgs$Resistance.Mechanism, 
+                                         Sample=amgs$Sample), FUN=sum)
+```
+
+merge gene name with drug class name
+
+```{r}
+amgs3 <- amgs2 %>% separate(Drug.class, c("a", "b"), sep = "([;])")
+```
+
+replace names of other drug.class with 'other'
+```{r}
+amgs3$b[!(amgs3$b %in% NA)] <- "Other"
+```
+
+```{r}
+amgs4 <- amgs3 %>% mutate(a = as.character(gsub(" antibiotic", "", a)))
+```
+
+
+```{r}
+amgs5 <- amgs4 %>% unite("ab", a:b, sep = ";")
+```
+
+```{r}
+amgs6 <- amgs5 %>% mutate(ab = as.character(gsub(";NA", "", ab)))
+```
+
+
+```{r}
+amgs7 <- amgs6 %>% unite("Gene", Gene:ab, sep = ";")
+```
+
+
+add status for samples
+
+```{r}
+df <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/taxonomy/metadata/Metagenomes_all.stool.xlsx")
+
+df2 <- data.frame(df)
+```
+
+```{r}
+##subset only baseline samples
+
+df1 <- df2[(df2$Group %in% c("HC", "MS-nOC_BL")), c("name", "type", "Group")]
+```
+
+
+import metadata from MS munich 
+
+```{r}
+m1 <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich/metadata/Metagenomes_MS_Munich.alba.edit.xlsx")
+
+m2 <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich/metadata/Proben.Kiel.Therapienaiv.und.Ocrelizumab.metagenomes.xlsx")
+```
+
+
+```{r}
+m <- merge(m1, m2, by="id")
+
+m$id3 <- NULL
+m$subject_id <- NULL
+m$id <- NULL
+m$sex <- NULL
+
+colnames(m) <- c("name", "type", "Group")
+```
+
+merge hc with ms participants
+
+```{r}
+t <- rbind(df1, m)
+
+t1 <- t[(t$type %in% "Stool"), ]
+```
+
+
+```{r}
+t22 <- t1 %>% mutate(name = as.character(gsub("22Apr5745-", "", name)))
+```
+
+```{r}
+t2 <- t22[!(t22$Group %in% "Ocrelizumab"), ]
+#t2 <- t22
+```
+
+
+
+
+fix samples in amgs7 table to match with metadata table
+
+```{r}
+d5 <- amgs7 %>% mutate(names = as.character(gsub("clean_", "", Sample)))
+d7 <- d5 %>% separate(names, c("a", "b", "c"), sep = "([_])")
+d7$c <- NULL
+d7$b <- NULL
+
+d8 <- d7 %>% mutate(a = as.character(gsub("-L1", "", a)))
+d9 <- d8 %>% mutate(names = as.character(gsub("220400005745-", "", a)))
+```
+
+
+
+```{r}
+df10 <- t2[, c("name", "Group")]
+colnames(df10)[1] <- "names"
+```
+
+```{r}
+tab <- merge(d9, df10, by="names")
+```
+
+
+```{r}
+tab$Sample <- NULL
+colnames(tab)[1] <- "Sample"
+colnames(tab)[4] <- "Rel.counts"
+```
+
+
+ordination
+
+pivot wider
+
+```{r}
+tab0 <- tab
+tab0$Resistance.mechanism <- NULL
+tab0$Group <- NULL
+```
+
+```{r}
+tab8 <- tab0 %>%
+  pivot_wider(names_from = Gene, values_from = Rel.counts)
+```
+
+```{r}
+table3 <- tab8 %>% remove_rownames %>% column_to_rownames(var="Sample")
+table3[is.na(table3)] <- 0
+```
+
+```{r}
+table3$a <- NULL
+```
+
+
+```{r}
+df20 <- df10[(df10$names %in% rownames(table3)), ]
+```
+
+```{r}
+df11 <- df20[order(df20$names), ]
+```
+
+```{r}
+df33 <- df11 %>% remove_rownames %>% column_to_rownames(var="names")
+```
+
+```{r}
+df33$Group1[df33$Group %in% "HC"] <- "HC"
+df33$Group1[!(df33$Group %in% "HC")] <- "MS-Merged"
+```
+
+
+```{r}
+library("Maaslin2")
+
+
+##maaslin
+fit_data = Maaslin2(
+    input_data = table3, 
+    input_metadata = df33, 
+    output = "2.maaslin.out.st.oc.km2", 
+    fixed_effects = c("Group"),
+    min_abundance = 0.0002,
+    min_prevalence = 0.4)
+
+```
+
+
+
+
+# Session info
+

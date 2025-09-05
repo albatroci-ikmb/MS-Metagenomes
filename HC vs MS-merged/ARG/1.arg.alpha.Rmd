@@ -1,0 +1,323 @@
+---
+title: "checkm results table"
+author: "Alba Troci"
+date: "`r Sys.Date()`"  
+output:
+   BiocStyle::html_document:
+      toc: true
+      df_print: paged
+      self_contained: true
+      code_download: true 
+      highlight: tango
+editor_options: 
+  chunk_output_type: console
+params:
+  FIGPATH: "figures/"
+  d.out: "./"
+---
+# Preparations
+## Set global options
+
+```{r style, results="asis", cache=FALSE, message = F, echo=FALSE}
+# Set knit global options
+library("knitr")
+options(digits = 2, width = 80)
+golden_ratio <- (1 + sqrt(5)) / 2
+opts_chunk$set(echo = TRUE,
+               tidy = FALSE,
+               include = TRUE,
+               fig.path = params$FIGPATH,
+               dev=c("png",'pdf'),
+               fig.height = 5,
+               fig.width = 4 * golden_ratio,
+               comment = '  ',
+               dpi = 300,
+               cache = FALSE)
+
+
+# Pretty outputs
+library("rmarkdown")
+library("BiocStyle")
+library("ggthemes") # add ggplot2 themes
+library("ggplot2")
+library("ggpubr")
+
+# Set seed for reproducibility
+set.seed(100)
+
+# Set plotting theme
+theme_set(theme_few(base_size = 14))
+
+# Set output directory
+d.out <- params$d.out
+rm(params)
+```
+
+
+## Load libraries for the session
+```{r libraries, message=FALSE}
+library("magrittr")
+library("ggplot2")
+library("tidyverse")
+library("readxl")
+library("dada2")
+library("phyloseq")
+library("gridExtra")
+library("vegan")
+library("plyr")
+library("scales")
+library("reshape2")
+library("DESeq2")
+library("dplyr") #for data manipulation
+library("msa") #multiple sequence alignment
+library("ape") #to create phylogenetic tree
+library("randomForest") 
+library("caret") 
+library("broom")
+library("mlbench")
+library("plotROC")
+library("car")
+library("MASS")
+library("lme4")
+library("lmerTest")
+library("fitdistrplus")
+library("psycho")
+
+library("rstatix")
+library("coin")
+library("stringr")
+library("rio")
+
+
+```
+
+
+
+```{r}
+final.bins <- read.csv(paste("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich.kiel/arg/amg.stool/2.all.amgs.stool.km.tsv"),sep = '\t', header=TRUE)
+```
+
+
+```{r}
+amgs <- final.bins[, c("Best_Hit_ARO", "Drug.Class", "Resistance.Mechanism",
+                       "counts", "length_bp", "Sample")]
+
+```
+
+
+```{r}
+amgs$rel.counts <- amgs$counts/amgs$length_bp
+```
+
+```{r}
+amgs2 <- aggregate(amgs$rel.counts, list(Gene= amgs$Best_Hit_ARO, 
+                                         Drug.class=amgs$Drug.Class, 
+                                         Resistance.mechanism=amgs$Resistance.Mechanism, 
+                                         Sample=amgs$Sample), FUN=sum)
+```
+
+merge gene name with drug class name
+
+```{r}
+amgs3 <- amgs2 %>% separate(Drug.class, c("a", "b"), sep = "([;])")
+```
+
+replace names of other drug.class with 'other'
+```{r}
+amgs3$b[!(amgs3$b %in% NA)] <- "Other"
+```
+
+```{r}
+amgs4 <- amgs3 %>% mutate(a = as.character(gsub(" antibiotic", "", a)))
+```
+
+
+```{r}
+amgs5 <- amgs4 %>% unite("ab", a:b, sep = ";")
+```
+
+```{r}
+amgs6 <- amgs5 %>% mutate(ab = as.character(gsub(";NA", "", ab)))
+```
+
+
+```{r}
+amgs7 <- amgs6 %>% unite("Gene", Gene:ab, sep = ";")
+```
+
+
+add status for samples
+
+```{r}
+df <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/taxonomy/metadata/Metagenomes_all.stool.xlsx")
+
+df2 <- data.frame(df)
+```
+
+```{r}
+##subset only baseline samples
+
+df1 <- df2[(df2$Group %in% c("HC", "MS-nOC_BL")), c("name", "type", "Group")]
+```
+
+
+import metadata from MS munich 
+
+```{r}
+m1 <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich/metadata/Metagenomes_MS_Munich.alba.edit.xlsx")
+
+m2 <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich/metadata/Proben.Kiel.Therapienaiv.und.Ocrelizumab.metagenomes.xlsx")
+```
+
+
+```{r}
+m <- merge(m1, m2, by="id")
+
+m$id3 <- NULL
+m$subject_id <- NULL
+m$id <- NULL
+m$sex <- NULL
+
+colnames(m) <- c("name", "type", "Group")
+```
+
+merge hc with ms participants
+
+```{r}
+t <- rbind(df1, m)
+
+t1 <- t[(t$type %in% "Stool"), ]
+```
+
+
+```{r}
+t22 <- t1 %>% mutate(name = as.character(gsub("22Apr5745-", "", name)))
+```
+
+```{r}
+t2 <- t22[!(t22$Group %in% "Ocrelizumab"), ]
+#t2 <- t22
+```
+
+
+
+
+fix samples in amgs7 table to match with metadata table
+
+```{r}
+d5 <- amgs7 %>% mutate(names = as.character(gsub("clean_", "", Sample)))
+d7 <- d5 %>% separate(names, c("a", "b", "c"), sep = "([_])")
+d7$c <- NULL
+d7$b <- NULL
+
+d8 <- d7 %>% mutate(a = as.character(gsub("-L1", "", a)))
+d9 <- d8 %>% mutate(names = as.character(gsub("220400005745-", "", a)))
+```
+
+
+
+```{r}
+df10 <- t2[, c("name", "Group")]
+colnames(df10)[1] <- "names"
+```
+
+```{r}
+tab <- merge(d9, df10, by="names")
+```
+
+
+```{r}
+tab$Sample <- NULL
+colnames(tab)[1] <- "Sample"
+colnames(tab)[4] <- "Rel.counts"
+```
+
+
+First we create a table indicating the presence/absence of each of the species at each of the sites.
+
+```{r}
+
+ps<- table(tab$Gene,tab$Sample)
+
+ps2 <- data.frame(ps)
+
+```
+
+
+```{r}
+ps3 <- ps2 %>%
+  pivot_wider(names_from = Var2, values_from = Freq)
+```
+
+```{r}
+colnames(ps3)[1] <- "Gene"
+```
+
+```{r}
+
+psr<-data.frame(richness=colSums(ps))
+
+```
+
+```{r}
+psr$Sample <- rownames(psr)
+```
+
+```{r}
+tab2 <- tab[, c("Sample", "Gene", "Group")]
+```
+
+```{r}
+tab2$Group1[tab2$Group %in% "HC"] <- "HC"
+tab2$Group1[!(tab2$Group %in% "HC")] <- "MS-Merged"
+```
+
+
+
+
+```{r}
+d <- merge(psr, tab2, by="Sample")
+```
+
+```{r}
+d$Gene <- NULL
+
+d2 <- d[!(duplicated(d)), ]
+```
+
+```{r}
+theme_set(theme_bw())
+p <- ggplot(d2, aes(x=Group1, y=richness, color=Group1)) + 
+  geom_boxplot(alpha = 2, na.rm = TRUE, outlier.size = 0)+ 
+                        theme(text = element_text(size = 13)) +
+                        scale_colour_brewer(palette = "Set1") +
+                        labs(y="Diversity richness", x = "Status")+
+  scale_y_continuous(expand = expansion(mult = c(0, 0.3)))
+
+p + geom_jitter(shape=16, position=position_jitter(0.2))
+
+ggsave("alpha.status.png")
+```
+
+## Statistics (Chao1 ~ Status)
+
+AD vs HC
+```{r}
+#normality
+shapiro.test(d2$richness)
+
+#chao1
+t1 <- wilcox.test(richness ~ Group1, data = d2,conf.int=TRUE,
+       p.adjust.methods = "fdr",var.equal = TRUE)
+t1
+
+effect1 <- d2 %>% cohens_d(richness ~ Group1, var.equal = TRUE, hedges.correction = TRUE)
+#df %>% wilcox_effsize(Chao1 ~ Status)
+effect1
+
+```
+
+
+
+# Session info
+
