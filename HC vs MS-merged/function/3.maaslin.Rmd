@@ -1,0 +1,333 @@
+---
+title: "Bins and contig abundance tables"
+author: "Alba Troci"
+date: "`r Sys.Date()`"  
+output:
+   BiocStyle::html_document:
+      toc: true
+      df_print: paged
+      self_contained: true
+      code_download: true 
+      highlight: tango
+editor_options:
+  chunk_output_type: console
+params:
+  FIGPATH: "figures/"
+  d.out: "./"
+---
+# Preparations
+## Set global options
+
+```{r style, results="asis", cache=FALSE, message = F, echo=FALSE}
+# Set knit global options
+library("knitr")
+options(digits = 2, width = 80)
+golden_ratio <- (1 + sqrt(5)) / 2
+opts_chunk$set(echo = TRUE,
+               tidy = FALSE,
+               include = TRUE,
+               fig.path = params$FIGPATH,
+               dev=c("png",'pdf'),
+               fig.height = 5,
+               fig.width = 4 * golden_ratio,
+               comment = '  ',
+               dpi = 300,
+               cache = FALSE)
+
+
+# Pretty outputs
+library("rmarkdown")
+library("BiocStyle")
+library("ggthemes") # add ggplot2 themes
+library("ggplot2")
+library("ggpubr")
+
+# Set seed for reproducibility
+set.seed(100)
+
+# Set plotting theme
+theme_set(theme_few(base_size = 14))
+
+# Set output directory
+d.out <- params$d.out
+rm(params)
+```
+
+
+## Load libraries for the session
+```{r libraries, message=FALSE}
+library("magrittr")
+library("ggplot2")
+library("tidyverse")
+library("readxl")
+library("dada2")
+library("phyloseq")
+library("gridExtra")
+library("vegan")
+library("plyr")
+library("scales")
+library("reshape2")
+library("DESeq2")
+#library("dplyr") #for data manipulation
+library("msa") #multiple sequence alignment
+library("ape") #to create phylogenetic tree
+library("randomForest") 
+library("caret") 
+library("broom")
+library("mlbench")
+library("plotROC")
+library("car")
+library("MASS")
+library("lme4")
+library("lmerTest")
+library("fitdistrplus")
+library("psycho")
+library("rstatix")
+library("coin")
+library("stringr")
+library("data.table")
+
+
+```
+
+```{r}
+abundance <- read.csv(paste("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich.kiel/input/stool/humann_pathabundance.all.st.tsv"),sep = '\t', header=TRUE, stringsAsFactors=FALSE)
+
+ab <- data.frame(abundance)
+
+```
+
+
+remove UNINTEGRATED and UNMAPPED
+
+```{r}
+ab2 <- ab[!(ab$X..Pathway %in% c("UNINTEGRATED", "UNMAPPED")), ]
+
+```
+
+
+```{r}
+#remove taxa with zero counts
+
+ab2$Pathway <- ab2$X..Pathway
+ab3 <- ab2 %>% separate(Pathway, c("Pathway2", "taxa"), sep = "([|])")
+
+```
+
+```{r}
+ab4 <- ab3[!(ab3$Pathway2 %in% c("UNINTEGRATED")), ]
+
+
+```
+
+```{r}
+ab44 <- ab4[is.na(ab4$taxa), ]
+```
+
+```{r}
+ab44$Pathway2 <- NULL
+ab44$taxa <- NULL
+```
+
+
+```{r}
+library("plyr")
+
+ab102 <- ddply(ab44,~X..Pathway,function(x) {
+  data.frame(ABUNDANCE=sum(x[-1]))
+})
+```
+
+```{r}
+#save pathway names, I need later for plot
+
+library("rio")
+ab44.save <- data.frame(Pathway=ab44$X..Pathway)
+# export(ab44.save, "pathway.names.wmgx.baseline.mun.st.xlsx")
+```
+
+
+
+```{r}
+#remove taxa with zero counts
+ab5 <- ab44 %>% separate(X..Pathway, c("Pathway", "d"), sep = "([:])")
+```
+
+```{r}
+#final abundance table
+ab6 <- ab5 %>% group_by(Pathway) %>% summarise_if( is.numeric, sum, na.rm = TRUE )
+```
+
+
+```{r}
+##transpose that I can modify sample names to match with metadata table
+d2 <- ab6 %>% remove_rownames %>% column_to_rownames(var="Pathway")
+d3 <- t(d2)
+d4 <- data.frame(d3)
+
+d4$UNKNOWN <- NULL
+```
+
+
+
+
+
+
+
+
+```{r}
+d4$names <- rownames(d4)
+d55 <- d4 %>% mutate(names = as.character(gsub("clean_", "", names)))
+
+d5 <- d55 %>% mutate(names = as.character(gsub("220400005745.", "", names)))
+d6 <- d5 %>% mutate(names = as.character(gsub("_taxonomic_profile", "", names)))
+d7 <- d6 %>% separate(names, c("a", "b", "c"), sep = "([_])")
+d7$c <- NULL
+d7$b <- NULL
+d8 <- d7 %>% mutate(a = as.character(gsub(".L1", "", a)))
+d9 <- d8 %>% separate(a, c("a", "b"), sep = "([.])")
+d10 <- d9 %>% unite("name", a:b, sep='-', remove = TRUE) 
+d11 <- d10 %>% mutate(name = as.character(gsub("-NA", "", name)))
+
+```
+
+
+```{r}
+#d12 <- d11 
+```
+
+
+##Add metadata table
+
+```{r}
+df <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/taxonomy/metadata/Metagenomes_all.stool.xlsx")
+
+df2 <- data.frame(df)
+```
+
+```{r}
+##subset only baseline samples
+
+df1 <- df2[(df2$Group %in% c("HC", "MS-nOC_BL")), c("name", "type", "Group")]
+```
+
+
+import metadata from MS munich 
+
+```{r}
+m1 <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich/metadata/Metagenomes_MS_Munich.alba.edit.xlsx")
+
+m2 <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich/metadata/Proben.Kiel.Therapienaiv.und.Ocrelizumab.metagenomes.xlsx")
+```
+
+
+```{r}
+m <- merge(m1, m2, by="id")
+
+m$id3 <- NULL
+m$subject_id <- NULL
+m$id <- NULL
+m$sex <- NULL
+
+colnames(m) <- c("name", "type", "Group")
+```
+
+merge hc with ms participants
+
+```{r}
+t <- rbind(df1, m)
+
+t1 <- t[(t$type %in% "Stool"), ]
+```
+
+
+
+```{r}
+t22 <- t1 %>% mutate(name = as.character(gsub("22Apr5745-", "", name)))
+```
+
+```{r}
+t2 <- t22[!(t22$Group %in% "Ocrelizumab"), ]
+#t2 <- t22
+```
+
+table analysis
+
+
+```{r}
+d12 <- d11[(d11$name %in% t2$name), ]
+```
+
+
+```{r}
+table3 <- d12 %>% remove_rownames %>% column_to_rownames(var="name")
+```
+
+convert to numeric
+
+```{r}
+table4 <- data.frame(apply(table3, 2, function(x) as.numeric(as.character(x))))
+rownames(table4) <- rownames(table3)
+```
+
+```{r}
+#remove sample that has zero total sum
+
+table5 <- table4[(rowSums(table4) > 0), ]
+```
+
+```{r}
+tt <- data.frame(sum=colSums(table5), name=colnames(table5))
+dim(tt[(tt$sum > 0.001), ])  ##keep only hight abundant functions
+
+tt2 <- tt[(tt$sum > 0.001), ]
+```
+
+```{r}
+table6 <- table5[,(colnames(table5) %in% tt2$name)]
+```
+
+```{r}
+df18 <- t2[(t2$name %in% rownames(table5)), ]
+```
+
+```{r}
+df33 <- df18 %>% remove_rownames %>% column_to_rownames(var="name")
+```
+
+```{r}
+df33$Group1[!(df33$Group %in% "HC")] <- "MS-nOC"
+df33$Group1[(df33$Group %in% "HC")] <- "HC"
+
+```
+
+```{r}
+df33$Cohort[!(df33$Group %in% "Therapienaiv")] <- "Kiel"
+df33$Cohort[(df33$Group %in% "Therapienaiv")] <- "Munich"
+
+```
+
+
+By default Maaslin uses Total Sum Scaling (TSS) normalization and log transformation
+
+why filtering exactly 0.00006!!!
+
+```{r}
+library("Maaslin2")
+##maaslin
+fit_data = Maaslin2(
+    input_data = table6, 
+    input_metadata = df33, 
+    output = "maaslin.kiel.munich.st.cohort2", 
+    #fixed_effects = c("Group1"),
+    fixed_effects = c("Group1", "Cohort"),
+    min_abundance = 0.00006,
+    min_prevalence = 0.6)
+  
+```
+
+
+
+
+
+##session info

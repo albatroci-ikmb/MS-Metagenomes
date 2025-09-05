@@ -1,0 +1,374 @@
+---
+title: "Bins and contig abundance tables"
+author: "Alba Troci"
+date: "`r Sys.Date()`"  
+output:
+   BiocStyle::html_document:
+      toc: true
+      df_print: paged
+      self_contained: true
+      code_download: true 
+      highlight: tango
+editor_options:
+  chunk_output_type: console
+params:
+  FIGPATH: "figures/"
+  d.out: "./"
+---
+# Preparations
+## Set global options
+
+```{r style, results="asis", cache=FALSE, message = F, echo=FALSE}
+# Set knit global options
+library("knitr")
+options(digits = 2, width = 80)
+golden_ratio <- (1 + sqrt(5)) / 2
+opts_chunk$set(echo = TRUE,
+               tidy = FALSE,
+               include = TRUE,
+               fig.path = params$FIGPATH,
+               dev=c("png",'pdf'),
+               fig.height = 5,
+               fig.width = 4 * golden_ratio,
+               comment = '  ',
+               dpi = 300,
+               cache = FALSE)
+
+
+# Pretty outputs
+library("rmarkdown")
+library("BiocStyle")
+library("ggthemes") # add ggplot2 themes
+library("ggplot2")
+library("ggpubr")
+
+# Set seed for reproducibility
+set.seed(100)
+
+# Set plotting theme
+theme_set(theme_few(base_size = 14))
+
+# Set output directory
+d.out <- params$d.out
+rm(params)
+```
+
+
+## Load libraries for the session
+```{r libraries, message=FALSE}
+library("magrittr")
+library("ggplot2")
+library("tidyverse")
+library("readxl")
+library("dada2")
+library("phyloseq")
+library("gridExtra")
+library("vegan")
+library("plyr")
+library("scales")
+library("reshape2")
+library("DESeq2")
+#library("dplyr") #for data manipulation
+library("msa") #multiple sequence alignment
+library("ape") #to create phylogenetic tree
+library("randomForest") 
+library("caret") 
+library("broom")
+library("mlbench")
+library("plotROC")
+library("car")
+library("MASS")
+library("lme4")
+library("lmerTest")
+library("fitdistrplus")
+library("psycho")
+library("rstatix")
+library("coin")
+library("stringr")
+library("data.table")
+
+
+```
+
+```{r}
+abundance <- read.csv(paste("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich.kiel/input/stool/humann_pathabundance.all.st.tsv"),sep = '\t', header=TRUE, stringsAsFactors=FALSE)
+
+ab <- data.frame(abundance)
+
+```
+
+
+remove UNINTEGRATED and UNMAPPED
+
+```{r}
+ab2 <- ab[!(ab$X..Pathway %in% c("UNINTEGRATED", "UNMAPPED")), ]
+
+```
+
+
+```{r}
+#remove taxa with zero counts
+
+ab2$Pathway <- ab2$X..Pathway
+ab3 <- ab2 %>% separate(Pathway, c("Pathway2", "taxa"), sep = "([|])")
+
+```
+
+```{r}
+ab4 <- ab3[!(ab3$Pathway2 %in% c("UNINTEGRATED")), ]
+
+
+```
+
+```{r}
+ab4$Pathway2 <- NULL
+ab4$taxa <- NULL
+```
+
+
+fix pathway names
+
+```{r}
+##replace pathway names with codes, this way they will not change
+ab4$PW1 <- 0
+seqs <- ab4$X..Pathway %>%
+  data.frame(seqs = ., stringsAsFactors = F) %>%
+  mutate(PW1= 1:nrow(.),
+         PW = paste0("PW", PW1))
+
+identical(ab4$X..Pathway, seqs$seqs)
+ab4$X..Pathway <- seqs$PW
+
+```
+
+```{r}
+##save table with new names, will merge in the end with results
+
+library("rio")
+
+#export(seqs, "pathway.names.wmgx.kiel.munich.st.xlsx")
+```
+
+
+```{r}
+##transpose that I can modify sample names to match with metadata table
+d2 <- ab4 %>% remove_rownames %>% column_to_rownames(var="X..Pathway")
+d3 <- t(d2)
+d4 <- data.frame(d3)
+
+d4$UNKNOWN <- NULL
+```
+
+
+```{r}
+d4$names <- rownames(d4)
+d55 <- d4 %>% mutate(names = as.character(gsub("clean_", "", names)))
+
+d5 <- d55 %>% mutate(names = as.character(gsub("220400005745.", "", names)))
+d6 <- d5 %>% mutate(names = as.character(gsub("_taxonomic_profile", "", names)))
+d7 <- d6 %>% separate(names, c("a", "b", "c"), sep = "([_])")
+d7$c <- NULL
+d7$b <- NULL
+d8 <- d7 %>% mutate(a = as.character(gsub(".L1", "", a)))
+d9 <- d8 %>% separate(a, c("a", "b"), sep = "([.])")
+d10 <- d9 %>% unite("name", a:b, sep='-', remove = TRUE) 
+d11 <- d10 %>% mutate(name = as.character(gsub("-NA", "", name)))
+
+```
+
+
+```{r}
+#d12 <- d11 
+```
+
+
+##Add metadata table
+
+```{r}
+df <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/taxonomy/metadata/Metagenomes_all.stool.xlsx")
+
+df2 <- data.frame(df)
+```
+
+```{r}
+##subset only baseline samples
+
+df1 <- df2[(df2$Group %in% c("HC", "MS-nOC_BL")), c("name", "type", "Group")]
+```
+
+
+import metadata from MS munich 
+
+```{r}
+m1 <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich/metadata/Metagenomes_MS_Munich.alba.edit.xlsx")
+
+m2 <- read_excel("/home/alba/Desktop/Alba/MS.metagenomes/ms.munich/metadata/Proben.Kiel.Therapienaiv.und.Ocrelizumab.metagenomes.xlsx")
+```
+
+
+```{r}
+m <- merge(m1, m2, by="id")
+
+m$id3 <- NULL
+m$subject_id <- NULL
+m$id <- NULL
+m$sex <- NULL
+
+colnames(m) <- c("name", "type", "Group")
+```
+
+merge hc with ms participants
+
+```{r}
+t <- rbind(df1, m)
+
+t1 <- t[(t$type %in% "Stool"), ]
+```
+
+
+
+```{r}
+t22 <- t1 %>% mutate(name = as.character(gsub("22Apr5745-", "", name)))
+```
+
+```{r}
+t2 <- t22[!(t22$Group %in% "Ocrelizumab"), ]
+#t2 <- t22
+```
+
+table analysis
+
+
+```{r}
+d12 <- d11[(d11$name %in% t2$name), ]
+```
+
+
+```{r}
+table3 <- d12 %>% remove_rownames %>% column_to_rownames(var="name")
+```
+
+convert to numeric
+
+```{r}
+table4 <- data.frame(apply(table3, 2, function(x) as.numeric(as.character(x))))
+rownames(table4) <- rownames(table3)
+```
+
+```{r}
+#remove sample that has zero total sum
+
+table5 <- table4[(rowSums(table4) > 0), ]
+#table55 <- table5[!(rownames(table5) %in% "21Aug43-C05"), ]
+
+table55 <- table5
+```
+
+```{r}
+df19 <- df17[(df17$name %in% rownames(table55)), ]
+```
+
+
+##fit pcoa
+
+```{r}
+bray.f <- vegdist(table55,method="bray")
+
+res.f <- pcoa(bray.f)
+#res.f$values
+dt.f <- data.frame(PC1=res.f$vectors[, 1], PC2=res.f$vectors[, 2])
+```
+
+```{r}
+percentage.f <- round(res.f$values$Relative_eig * 100, 2)
+percentage.f <- paste( colnames(dt.f), "(", paste( as.character(percentage.f), "%", ")", sep="") )
+
+```
+
+```{r}
+##add names to merge with metadata table
+dt.f$name <- rownames(dt.f)
+
+dt.f1 <- merge(dt.f, t2, by="name")
+```
+
+add a new variable Group1 where I merge all MS patients together
+
+```{r}
+dt.f1$Group1[dt.f1$Group %in% "HC"] <- "HC"
+dt.f1$Group1[!(dt.f1$Group %in% "HC")] <- "MS-nOC"
+
+dt.f1$Cohort[dt.f1$Group %in% "Therapienaiv"] <- "Munich"
+dt.f1$Cohort[!(dt.f1$Group %in% "Therapienaiv")] <- "Kiel"
+```
+
+```{r}
+centroids <- aggregate(cbind(PC1, PC2)~Group1,dt.f1,mean)
+centroids
+```
+
+```{r}
+theme_set(theme_bw())
+p1 <- ggplot(dt.f1,aes(x=PC1,y=PC2, color=Group1))
+p1 <- p1+geom_point(aes (size = 1, shape=Cohort,  alpha = 1)) +xlab(percentage.f[1]) + ylab(percentage.f[2])+
+  scale_color_brewer(palette = "Set1") +
+  theme(text = element_text(size = 16),
+        legend.position="right")
+        #legend.position="none")
+  
+p1
+
+#p2 <- p1 + stat_ellipse()+ geom_point(data=centroids,size=3)
+
+p2 <- p1 + geom_point(data=centroids,size=3)
+p2
+
+#ggsave("pcoa.food12.no.energy.png")
+```
+
+
+```{r}
+dt.f1$Group[dt.f1$Group %in% "Ocrelizumab"] <- "MS-OC"
+dt.f1$Group[dt.f1$Group %in% "Therapienaiv"] <- "MS-nOC"
+```
+
+
+
+```{r, out.width="60%"}
+oo <- ggscatterhist(
+ dt.f1, x = "PC1", y = "PC2",
+ color = "Group1", size = 2.5, alpha = 0.7, shape = "Cohort",
+ palette = "Set1",
+ margin.plot = "boxplot",
+ margin.params = list(fill = "Group1", color = "black", size = 0.2),
+ 
+ ggtheme = theme(text = element_text(size = 15))
+)
+oo
+
+fig <- oo
+
+#ggsave("ord.oc.png")
+
+```
+
+Permanova all
+
+```{r}
+disp.group <- betadisper(bray.f, dt.f1$Group1)
+
+#Perform an ANOVA-like test to determine if the variances differ by groups.
+permutest(disp.group, pairwise=TRUE, permutations=1000)
+```
+
+
+```{r}
+
+permanova2 <- adonis2(bray.f ~ dt.f1$Group1+dt.f1$Cohort)
+
+permanova2
+
+```
+
+
+##session info
