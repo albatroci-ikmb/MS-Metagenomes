@@ -1,0 +1,261 @@
+---
+title: "Diversity Analysis: MS-O vs HC.stool; MS-nO vs HC.stool"
+author: "Alba Troci"
+date: "`r Sys.Date()`"  
+output:
+   BiocStyle::html_document:
+      toc: true
+      df_print: paged
+      self_contained: true
+      code_download: true
+      highlight: tango
+editor_options:
+  chunk_output_type: console
+params:
+  FIGPATH: "figures/"
+  d.out: "./"
+---
+
+# Preparations
+## Set global options
+
+```{r style, results="asis", cache=FALSE, message = F, echo=FALSE}
+# Set knit global options
+library("knitr")
+options(digits = 2, width = 80)
+golden_ratio <- (1 + sqrt(5)) / 2
+opts_chunk$set(echo = TRUE,
+               tidy = FALSE,
+               include = TRUE,
+               fig.path = params$FIGPATH,
+               dev=c("png",'pdf'),
+               fig.height = 5,
+               fig.width = 4 * golden_ratio,
+               comment = '  ',
+               dpi = 300,
+               cache = FALSE)
+
+
+# Pretty outputs
+library("rmarkdown")
+#library("BiocStyle")
+library("ggthemes") # add ggplot2 themes
+library("ggplot2")
+library("ggpubr")
+
+# Set seed for reproducibility
+set.seed(100)
+
+# Set plotting theme
+theme_set(theme_few(base_size = 14))
+
+# Set output directory
+d.out <- params$d.out
+rm(params)
+```
+
+## Load libraries for the session
+```{r libraries, message=FALSE}
+library("magrittr")
+library("ggplot2")
+library("tidyverse")
+library("readxl")
+library("dada2")
+library("phyloseq")
+library("gridExtra")
+library("vegan")
+library("plyr")
+library("scales")
+library("reshape2")
+library("DESeq2")
+library("dplyr") 
+library("Maaslin2")
+library("readxl")
+```
+
+
+
+
+```{r}
+abundance <- read.delim("/home/albatroci/Desktop/Alba/projects/MS.metagenome/MS.metagenomes/ms.munich.kiel/input/stool/merged_abundance_table.stool.txt", header = TRUE, sep = "\t")
+
+ab <- data.frame(abundance)
+ab$NCBI_tax_id <- NULL
+```
+
+```{r}
+##transpose that I can modify sample names to match with metadata table
+d2 <- ab %>% remove_rownames %>% column_to_rownames(var="clade_name")
+d3 <- t(d2)
+d4 <- data.frame(d3)
+
+d4$UNKNOWN <- NULL
+```
+
+```{r}
+d4$names <- rownames(d4)
+d55 <- d4 %>% mutate(names = as.character(gsub("clean_", "", names)))
+
+d5 <- d55 %>% mutate(names = as.character(gsub("220400005745.", "", names)))
+d6 <- d5 %>% mutate(names = as.character(gsub("_taxonomic_profile", "", names)))
+d7 <- d6 %>% separate(names, c("a", "b", "c"), sep = "([_])")
+d7$c <- NULL
+d7$b <- NULL
+d8 <- d7 %>% mutate(a = as.character(gsub(".L1", "", a)))
+d9 <- d8 %>% separate(a, c("a", "b"), sep = "([.])")
+d10 <- d9 %>% unite("name", a:b, sep='-', remove = TRUE) 
+d11 <- d10 %>% mutate(name = as.character(gsub("-NA", "", name)))
+
+```
+
+
+
+##Add metadata table
+
+##Add metadata table
+
+```{r}
+df <- read_excel("/home/albatroci/Desktop/Alba/projects/MS.metagenome/MS.metagenomes/taxonomy/metadata/Metagenomes_all.stool.xlsx")
+
+df2 <- data.frame(df)
+```
+
+```{r}
+##subset only baseline samples
+
+df1 <- df2[(df2$Group %in% c("HC", "MS-nOC_BL")), c("name", "type", "Group")]
+```
+
+
+import metadata from MS munich 
+
+```{r}
+m1 <- read_excel("/home/albatroci/Desktop/Alba/projects/MS.metagenome/MS.metagenomes/ms.munich/metadata/Metagenomes_MS_Munich.alba.edit.xlsx")
+
+m2 <- read_excel("/home/albatroci/Desktop/Alba/projects/MS.metagenome/MS.metagenomes/ms.munich/metadata/Proben.Kiel.Therapienaiv.und.Ocrelizumab.metagenomes.xlsx")
+```
+
+```{r}
+m <- merge(m1, m2, by="id")
+
+m$id3 <- NULL
+m$subject_id <- NULL
+m$id <- NULL
+m$sex <- NULL
+
+colnames(m) <- c("name", "type", "Group")
+```
+
+merge hc with ms participants
+
+```{r}
+t <- rbind(df1, m)
+
+t1 <- t[(t$type %in% "Stool"), ]
+```
+
+```{r}
+t22 <- t1 %>% mutate(name = as.character(gsub("22Apr5745-", "", name)))
+```
+
+```{r}
+t2 <- t22[!(t22$Group %in% "Ocrelizumab"), ]
+#t2 <- t22
+```
+
+
+table analysis
+
+
+```{r}
+d12 <- d11[(d11$name %in% t2$name), ]
+```
+
+
+```{r}
+tab2 <- d12 %>%
+  pivot_longer(!name, names_to = "taxa", values_to = "count")
+```
+
+
+```{r}
+#remove taxa with zero counts
+
+tab3 <- tab2[!(tab2$count==0), ]
+tab3$taxa2 <- tab3$taxa
+tab4 <- tab3 %>% separate(taxa2, c("K", "P", "C", "O", "F", "G", "S"), sep = "([.])")
+
+```
+
+```{r}
+tab5 <- tab4[, c("name", "count", "G", "S")]
+
+tab6 <- tab5[!is.na(tab5$S), ]
+tab7 <- tab6
+
+tab7$G <- NULL
+```
+
+```{r}
+##remove samples that are not receiving ocrelizumab
+#CPN3HFE9 = F01, WPH2X5V4 = A01
+
+#tab70 <- tab7[!(tab7$name %in% c("F01", "A01")), ]
+tab70 <- tab7
+```
+
+pivot wider
+
+```{r}
+tab8 <- tab70 %>%
+  pivot_wider(names_from = S, values_from = count)
+```
+
+```{r}
+table3 <- tab8 %>% remove_rownames %>% column_to_rownames(var="name")
+table3[is.na(table3)] <- 0
+```
+
+metadata table
+```{r}
+
+t23 <- t2[(t2$name %in% rownames(table3)), ]
+df11 <- t23[order(t23$name), ]
+```
+
+```{r}
+df33 <- df11 %>% remove_rownames %>% column_to_rownames(var="name")
+```
+
+```{r}
+df33$Group1[!(df33$Group %in% "HC")] <- "MS-nOC"
+df33$Group1[(df33$Group %in% "HC")] <- "HC"
+
+```
+
+```{r}
+df33$Cohort[!(df33$Group %in% "Therapienaiv")] <- "Kiel"
+df33$Cohort[(df33$Group %in% "Therapienaiv")] <- "Munich"
+
+```
+
+
+```{r}
+library("Maaslin2")
+
+
+##maaslin
+fit_data = Maaslin2(
+    input_data = table3, 
+    input_metadata = df33, 
+    output = "maaslin.kiel.munich.all.cohort", 
+    fixed_effects = c("Group1"),
+    #fixed_effects = c("Group1", "Cohort"),
+    min_abundance = 0.001,
+    min_prevalence = 0.4)
+
+```
+
+
+
+##session info
